@@ -47,9 +47,11 @@ export const ChromeExtensionModal: React.FC<ChromeExtensionModalProps> = ({
     setIsDownloading(true);
     try {
       const blob = await generateChromeExtensionZip({
-        appUrl: window.location.href,
+        appUrl: window.location.origin,
         spreadsheetId: googleConfig.spreadsheetId,
-        spreadsheetUrl: googleConfig.spreadsheetUrl
+        spreadsheetUrl: googleConfig.spreadsheetUrl,
+        accessToken: googleConfig.accessToken,
+        clientId: googleConfig.clientId
       });
 
       const url = URL.createObjectURL(blob);

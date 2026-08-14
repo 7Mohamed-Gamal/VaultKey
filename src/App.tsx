@@ -109,6 +109,53 @@ export default function App() {
     document.documentElement.lang = lang;
   }, [lang, isAr]);
 
+  // Listen for real-time messages from Chrome Extension
+  useEffect(() => {
+    const handleExtensionMessage = (event: MessageEvent) => {
+      if (event.data && event.data.source === 'keyvault-extension' && event.data.action === 'NEW_SECRET_SAVED') {
+        const newSec: SecretItem = event.data.secret;
+        if (newSec && newSec.id) {
+          setSecrets(prev => {
+            if (prev.some(s => s.id === newSec.id)) return prev;
+            return [newSec, ...prev];
+          });
+          showToast(
+            isAr 
+              ? `⚡ تم استلام "${newSec.serviceName}" فوراً من إضافة Chrome!` 
+              : `⚡ Received "${newSec.serviceName}" from Chrome extension!`
+          );
+
+          // If Google Sheets is connected on the web app, also trigger sync
+          if (googleConfig.isConnected && googleConfig.accessToken) {
+            syncSecretToGoogleSheet(googleConfig.accessToken, googleConfig, newSec).catch(err => {
+              console.warn('Sync from extension to sheet in app:', err);
+            });
+          }
+        }
+      }
+    };
+
+    // Also reload from localStorage on window focus to catch any secrets saved in other tabs
+    const handleWindowFocus = () => {
+      const stored = getStoredSecrets();
+      if (stored && stored.length > 0) {
+        setSecrets(prev => {
+          if (stored.length !== prev.length || JSON.stringify(stored[0]) !== JSON.stringify(prev[0])) {
+            return stored;
+          }
+          return prev;
+        });
+      }
+    };
+
+    window.addEventListener('message', handleExtensionMessage);
+    window.addEventListener('focus', handleWindowFocus);
+    return () => {
+      window.removeEventListener('message', handleExtensionMessage);
+      window.removeEventListener('focus', handleWindowFocus);
+    };
+  }, [isAr, googleConfig]);
+
   // Handle Google OAuth Token Connection
   const handleConnectGoogle = () => {
     setIsOAuthModalOpen(true);
