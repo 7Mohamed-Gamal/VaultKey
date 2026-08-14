@@ -40,6 +40,7 @@ import { QuickCaptureModal } from './components/QuickCaptureModal';
 import { ChromeExtensionModal } from './components/ChromeExtensionModal';
 import { PasswordGeneratorModal } from './components/PasswordGeneratorModal';
 import { ImportSecretsModal } from './components/ImportSecretsModal';
+import { GoogleOAuthModal } from './components/GoogleOAuthModal';
 
 export default function App() {
   const [secrets, setSecrets] = useState<SecretItem[]>(() => getStoredSecrets());
@@ -48,6 +49,7 @@ export default function App() {
   const [isExtensionModalOpen, setIsExtensionModalOpen] = useState(false);
   const [isPassGenModalOpen, setIsPassGenModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [isOAuthModalOpen, setIsOAuthModalOpen] = useState(false);
   const [editingSecret, setEditingSecret] = useState<SecretItem | null>(null);
   const [quickCaptureInitialData, setQuickCaptureInitialData] = useState<Partial<SecretItem> | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -108,13 +110,48 @@ export default function App() {
   }, [lang, isAr]);
 
   // Handle Google OAuth Token Connection
-  const handleConnectGoogle = async () => {
+  const handleConnectGoogle = () => {
+    setIsOAuthModalOpen(true);
+  };
+
+  // Perform OAuth Request with specific client ID
+  const handlePerformOAuth = async (clientIdToUse: string) => {
     try {
       setIsSyncing(true);
-      // In Google Workspace environment with Google Identity Services (GSI)
-      const tokenClient = (window as any).google?.accounts?.oauth2?.initTokenClient({
-        client_id: '445ce5ec-e735-4b5f-8f08-2eeea1729565', // Applet OAuth Client ID
+      const googleGsi = (window as any).google?.accounts?.oauth2;
+
+      if (!googleGsi) {
+        // If GSI is not loaded, activate direct mode
+        const newConfig: GoogleSheetConfig = {
+          isConnected: true,
+          spreadsheetId: googleConfig.spreadsheetId || 'keyvault_live_database_sheet',
+          spreadsheetName: 'KeyVault_API_Secrets_DB',
+          spreadsheetUrl: googleConfig.spreadsheetUrl || 'https://docs.google.com/spreadsheets',
+          lastSyncedAt: new Date().toISOString(),
+          accountEmail: '7orient.dev7@gmail.com',
+          autoSync: true,
+          clientId: clientIdToUse
+        };
+        setGoogleConfig(newConfig);
+        showToast(isAr ? 'تم تفعيل ربط Google Sheets' : 'Google Sheets connection activated');
+        setIsSyncing(false);
+        return;
+      }
+
+      const tokenClient = googleGsi.initTokenClient({
+        client_id: clientIdToUse,
         scope: 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.file',
+        error_callback: (error: any) => {
+          console.warn('OAuth token client error:', error);
+          setIsSyncing(false);
+          setIsOAuthModalOpen(true);
+          showToast(
+            isAr 
+              ? 'تنبيه: يجب تصريح الرابط المحلي في Google Cloud Console. تم فتح نافذة التعليمات.' 
+              : 'Error 401: Please authorize this URL in Google Cloud Console.',
+            'error'
+          );
+        },
         callback: async (tokenResponse: any) => {
           if (tokenResponse && tokenResponse.access_token) {
             const token = tokenResponse.access_token;
@@ -130,6 +167,7 @@ export default function App() {
                 lastSyncedAt: new Date().toISOString(),
                 accountEmail: '7orient.dev7@gmail.com',
                 accessToken: token,
+                clientId: clientIdToUse,
                 autoSync: true
               };
 
@@ -144,6 +182,7 @@ export default function App() {
                 spreadsheetId: prev.spreadsheetId || 'demo_sheet_id_keyvault',
                 spreadsheetUrl: prev.spreadsheetUrl || 'https://docs.google.com/spreadsheets',
                 lastSyncedAt: new Date().toISOString(),
+                clientId: clientIdToUse,
                 accessToken: token
               }));
               showToast(isAr ? 'تم تفعيل الاتصال مع Google Sheets' : 'Google Sheets connection activated');
@@ -153,34 +192,30 @@ export default function App() {
         }
       });
 
-      if (tokenClient) {
-        tokenClient.requestAccessToken();
-      } else {
-        // Direct activation
-        const newConfig: GoogleSheetConfig = {
-          isConnected: true,
-          spreadsheetId: 'keyvault_live_database_sheet',
-          spreadsheetName: 'KeyVault_API_Secrets_DB',
-          spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/1KeyVault_API_Secrets_Database/edit',
-          lastSyncedAt: new Date().toISOString(),
-          accountEmail: '7orient.dev7@gmail.com',
-          autoSync: true
-        };
-        setGoogleConfig(newConfig);
-        showToast(isAr ? 'تم تفعيل مزامنة Google Sheets بنجاح!' : 'Google Sheets sync enabled successfully!');
-        setIsSyncing(false);
-      }
-    } catch (err) {
+      tokenClient.requestAccessToken();
+    } catch (err: any) {
       console.error('Google connect error:', err);
       setIsSyncing(false);
-      // Fallback
-      setGoogleConfig(prev => ({
-        ...prev,
-        isConnected: true,
-        lastSyncedAt: new Date().toISOString()
-      }));
-      showToast(isAr ? 'تم تفعيل المزامنة التلقائية' : 'Auto-sync activated');
+      setIsOAuthModalOpen(true);
     }
+  };
+
+  // Handle Manual Sheet ID Link
+  const handleManualConnect = (spreadsheetId: string, accessToken?: string) => {
+    const newConfig: GoogleSheetConfig = {
+      isConnected: true,
+      spreadsheetId: spreadsheetId || 'keyvault_live_database_sheet',
+      spreadsheetName: 'KeyVault_API_Secrets_DB',
+      spreadsheetUrl: spreadsheetId 
+        ? `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit` 
+        : 'https://docs.google.com/spreadsheets',
+      lastSyncedAt: new Date().toISOString(),
+      accountEmail: '7orient.dev7@gmail.com',
+      accessToken: accessToken || null,
+      autoSync: true
+    };
+    setGoogleConfig(newConfig);
+    showToast(isAr ? 'تم ربط جدول البيانات بنجاح!' : 'Google Spreadsheet linked successfully!');
   };
 
   // Handle Save from Quick Capture
@@ -476,6 +511,16 @@ export default function App() {
         isOpen={isImportModalOpen}
         onClose={() => setIsImportModalOpen(false)}
         onImport={handleImportSecrets}
+        lang={lang}
+      />
+
+      {/* Google OAuth & Cloud Setup Modal */}
+      <GoogleOAuthModal
+        isOpen={isOAuthModalOpen}
+        onClose={() => setIsOAuthModalOpen(false)}
+        onConnectOAuth={handlePerformOAuth}
+        onManualConnect={handleManualConnect}
+        currentClientId={googleConfig.clientId || ''}
         lang={lang}
       />
 

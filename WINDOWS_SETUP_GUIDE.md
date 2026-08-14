@@ -60,12 +60,19 @@
 
 ---
 
-## 🔑 الخطوة 5: ربط Google Sheets (اختياري)
+## 🔑 الخطوة 5: ربط Google Sheets على جهازك المحلي (حل خطأ 401 invalid_client)
 
-- التطبيق يعمل بالكامل دون الحاجة لأي إعدادات مسبقة ويحفظ البيانات محلياً في المتصفح (`LocalStorage`).
-- إذا أردت مزامنة السجلات مع حساب Google الخاص بك:
-  1. اضغط على زر **"ربط Google Sheets"** في الشريط العلوي.
-  2. وافق على ربط حسابك، وسيتم إنشاء جدول بيانات مشفر ومنظم مخصص للخزنة تلقائياً.
+إذا ظهر لك خطأ `خطأ 401: invalid_client` أو `The OAuth client was not found`:
+- **سبب الخطأ**: جوجل تتطلب لأسباب أمنية أن يكون رابط التطوير المحلي `http://localhost:3000` مسجلاً داخل معرف العميل (`OAuth Client ID`) التابع لمشروعك في Google Cloud.
+- **الحل السريع المدمج في التطبيق**:
+  1. اضغط على زر **"ربط Google Sheets"** في الشريط العلوي، ستفتح لك نافذة إعداد المزامنة.
+  2. **الخيار الأول (الموصى به - OAuth)**:
+     - توجه إلى [Google Cloud Console Credentials](https://console.cloud.google.com/apis/credentials).
+     - اضغط على **Create Credentials** -> **OAuth client ID** -> نوع التطبيق **Web application**.
+     - في خانة **Authorized JavaScript origins** أضف: `http://localhost:3000`
+     - انسخ الـ `Client ID` وضعه داخل التطبيق واضغط "حفظ وتفعيل".
+  3. **الخيار الثاني (الربط المباشر برقم الجدول Sheet ID)**:
+     - انتقل لتبويب "ربط جدول مباشر" في النافذة وضع الـ `Spreadsheet ID` الخاص بأي جدول موجود لديك في Google Sheets.
 
 ---
 

@@ -31,6 +31,7 @@ export interface GoogleSheetConfig {
   accessToken?: string | null;
   tokenExpiresAt?: number | null;
   autoSync: boolean;
+  clientId?: string;
 }
 
 export interface ShortcutConfig {
