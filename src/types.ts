@@ -29,6 +29,7 @@ export interface GoogleSheetConfig {
   accountName?: string;
   accountPhoto?: string;
   accessToken?: string | null;
+  apiKey?: string | null;
   tokenExpiresAt?: number | null;
   autoSync: boolean;
   clientId?: string;

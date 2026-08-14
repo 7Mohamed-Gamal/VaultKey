@@ -1,6 +1,6 @@
 import { SecretItem, GoogleSheetConfig } from '../types';
 
-const SHEET_HEADERS = [
+export const SHEET_HEADERS = [
   'ID',
   'Type',
   'Service / Platform',
@@ -14,7 +14,26 @@ const SHEET_HEADERS = [
   'Last Updated'
 ];
 
-export async function createGoogleSpreadsheet(accessToken: string, title = 'KeyVault_API_Secrets_DB'): Promise<{ id: string; url: string }> {
+/**
+ * Extracts Spreadsheet ID from full URL or returns the clean ID
+ */
+export function extractSpreadsheetId(input: string): string {
+  if (!input) return '';
+  const trimmed = input.trim();
+  const match = trimmed.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  if (match && match[1]) {
+    return match[1];
+  }
+  return trimmed;
+}
+
+/**
+ * Creates a brand new Google Spreadsheet with headers
+ */
+export async function createGoogleSpreadsheet(
+  accessToken: string,
+  title = 'KeyVault_API_Secrets_DB'
+): Promise<{ id: string; url: string }> {
   const createRes = await fetch('https://sheets.googleapis.com/v4/spreadsheets', {
     method: 'POST',
     headers: {
@@ -56,6 +75,9 @@ export async function createGoogleSpreadsheet(accessToken: string, title = 'KeyV
   return { id: spreadsheetId, url: spreadsheetUrl };
 }
 
+/**
+ * Applies dark header styling to sheet
+ */
 export async function formatHeaderRow(accessToken: string, spreadsheetId: string): Promise<void> {
   try {
     await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
@@ -76,16 +98,16 @@ export async function formatHeaderRow(accessToken: string, spreadsheetId: string
               cell: {
                 userEnteredFormat: {
                   backgroundColor: {
-                    red: 0.12,
-                    green: 0.16,
-                    blue: 0.23
+                    red: 0.05,
+                    green: 0.72,
+                    blue: 0.54
                   },
                   horizontalAlignment: 'CENTER',
                   textFormat: {
                     foregroundColor: {
-                      red: 1.0,
-                      green: 1.0,
-                      blue: 1.0
+                      red: 0.0,
+                      green: 0.0,
+                      blue: 0.0
                     },
                     fontSize: 11,
                     bold: true
@@ -113,14 +135,18 @@ export async function formatHeaderRow(accessToken: string, spreadsheetId: string
   }
 }
 
+/**
+ * Appends rows to a spreadsheet
+ */
 export async function appendSheetValues(
   accessToken: string,
   spreadsheetId: string,
   range: string,
   values: any[][]
 ): Promise<any> {
+  const cleanId = extractSpreadsheetId(spreadsheetId);
   const res = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED`,
+    `https://sheets.googleapis.com/v4/spreadsheets/${cleanId}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED`,
     {
       method: 'POST',
       headers: {
@@ -141,14 +167,17 @@ export async function appendSheetValues(
   return await res.json();
 }
 
+/**
+ * Syncs single secret item to Google Sheet
+ */
 export async function syncSecretToGoogleSheet(
   accessToken: string,
   config: GoogleSheetConfig,
   secret: SecretItem
 ): Promise<{ success: boolean; spreadsheetUrl?: string }> {
-  let currentSheetId = config.spreadsheetId;
+  let currentSheetId = extractSpreadsheetId(config.spreadsheetId || '');
 
-  // If no spreadsheet ID exists yet, create one in user's Google Drive
+  // If no spreadsheet ID exists yet, create one
   if (!currentSheetId) {
     const created = await createGoogleSpreadsheet(accessToken, config.spreadsheetName || 'KeyVault_API_Secrets_DB');
     currentSheetId = created.id;
@@ -178,47 +207,132 @@ export async function syncSecretToGoogleSheet(
   };
 }
 
-export async function fetchSecretsFromSheet(
+/**
+ * Pushes entire local secret array to Google Sheet (overwrites or appends)
+ */
+export async function pushAllSecretsToSheet(
   accessToken: string,
-  spreadsheetId: string
-): Promise<SecretItem[]> {
+  spreadsheetId: string,
+  secrets: SecretItem[]
+): Promise<boolean> {
+  const cleanId = extractSpreadsheetId(spreadsheetId);
+  if (!cleanId || !accessToken) return false;
+
+  const rows = [
+    SHEET_HEADERS,
+    ...secrets.map(s => [
+      s.id,
+      s.type.toUpperCase(),
+      s.serviceName,
+      s.usernameOrEmail || '',
+      s.secretValue,
+      s.environment,
+      s.project || 'General',
+      (s.tags || []).join(', '),
+      s.notes || '',
+      s.createdAt,
+      s.updatedAt
+    ])
+  ];
+
   const res = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Vault_Secrets!A2:K1000`,
+    `https://sheets.googleapis.com/v4/spreadsheets/${cleanId}/values/Vault_Secrets!A1:K${rows.length}?valueInputOption=USER_ENTERED`,
     {
-      method: 'GET',
+      method: 'PUT',
       headers: {
-        'Authorization': `Bearer ${accessToken}`
-      }
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        values: rows
+      })
     }
   );
 
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error?.message || 'Failed to fetch from sheet');
+  return res.ok;
+}
+
+/**
+ * Fetches all secrets from Google Sheet with fallback to standard Sheet1 or API Key
+ */
+export async function fetchSecretsFromSheet(
+  auth: { accessToken?: string | null; apiKey?: string | null },
+  rawSpreadsheetId: string
+): Promise<SecretItem[]> {
+  const cleanId = extractSpreadsheetId(rawSpreadsheetId);
+  if (!cleanId) {
+    throw new Error('Spreadsheet ID is missing');
   }
 
-  const data = await res.json();
-  const rows = data.values || [];
+  const { accessToken, apiKey } = auth;
+  if (!accessToken && !apiKey) {
+    throw new Error('Google OAuth Access Token or API Key is required');
+  }
 
-  return rows.map((row: string[], index: number): SecretItem => {
-    const rawType = (row[1] || 'api_key').toLowerCase();
-    const validTypes = ['api_key', 'password', 'env_var', 'token', 'database_url', 'note'];
-    const type = validTypes.includes(rawType) ? (rawType as any) : 'api_key';
+  // Try sheet names: 'Vault_Secrets', 'Sheet1', or generic range 'A2:K1000'
+  const sheetNamesToTry = ['Vault_Secrets!A2:K1000', 'Sheet1!A2:K1000', 'A2:K1000'];
 
-    const tags = row[7] ? row[7].split(',').map((t: string) => t.trim()).filter(Boolean) : [];
+  let rows: string[][] = [];
+  let lastError: any = null;
 
-    return {
-      id: row[0] || `sec_imported_${index}_${Date.now()}`,
-      type,
-      serviceName: row[2] || 'Unnamed Service',
-      usernameOrEmail: row[3] || '',
-      secretValue: row[4] || '',
-      environment: (row[5] as any) || 'production',
-      project: row[6] || 'General',
-      tags,
-      notes: row[8] || '',
-      createdAt: row[9] || new Date().toISOString(),
-      updatedAt: row[10] || new Date().toISOString()
-    };
-  });
+  for (const range of sheetNamesToTry) {
+    try {
+      let url = `https://sheets.googleapis.com/v4/spreadsheets/${cleanId}/values/${encodeURIComponent(range)}`;
+      if (apiKey && !accessToken) {
+        url += `?key=${apiKey}`;
+      }
+
+      const headers: Record<string, string> = {};
+      if (accessToken) {
+        headers['Authorization'] = `Bearer ${accessToken}`;
+      }
+
+      const res = await fetch(url, { method: 'GET', headers });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.values && Array.isArray(data.values)) {
+          rows = data.values;
+          break;
+        }
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        lastError = errData.error?.message || `HTTP ${res.status}`;
+      }
+    } catch (err: any) {
+      lastError = err.message || err;
+    }
+  }
+
+  if (rows.length === 0 && lastError) {
+    console.warn('Could not fetch rows with exact sheet names, last error:', lastError);
+  }
+
+  // Convert rows into valid SecretItem objects
+  const parsedItems: SecretItem[] = rows
+    .filter(row => row && row.length >= 2 && (row[2] || row[4])) // Ensure at least serviceName or secret exists
+    .map((row: string[], index: number): SecretItem => {
+      const rawType = (row[1] || 'api_key').toLowerCase().replace(/\s+/g, '_');
+      const validTypes = ['api_key', 'password', 'env_var', 'token', 'database_url', 'note'];
+      const type = validTypes.includes(rawType) ? (rawType as any) : 'api_key';
+
+      const tags = row[7] 
+        ? row[7].split(',').map((t: string) => t.trim()).filter(Boolean) 
+        : [];
+
+      return {
+        id: row[0] || `sec_sheet_${index}_${Date.now()}`,
+        type,
+        serviceName: row[2] || 'Unnamed Service',
+        usernameOrEmail: row[3] || undefined,
+        secretValue: row[4] || '',
+        environment: (row[5] as any) || 'production',
+        project: row[6] || 'General',
+        tags,
+        notes: row[8] || '',
+        createdAt: row[9] || new Date().toISOString(),
+        updatedAt: row[10] || new Date().toISOString()
+      };
+    });
+
+  return parsedItems;
 }

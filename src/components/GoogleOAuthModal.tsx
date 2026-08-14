@@ -18,7 +18,7 @@ interface GoogleOAuthModalProps {
   isOpen: boolean;
   onClose: () => void;
   onConnectOAuth: (clientId: string) => void;
-  onManualConnect: (spreadsheetId: string, accessToken?: string) => void;
+  onManualConnect: (spreadsheetId: string, accessToken?: string, apiKey?: string) => void;
   currentClientId: string;
   lang: 'ar' | 'en';
 }
@@ -36,6 +36,7 @@ export const GoogleOAuthModal: React.FC<GoogleOAuthModalProps> = ({
   const [clientIdInput, setClientIdInput] = useState(currentClientId || '');
   const [spreadsheetIdInput, setSpreadsheetIdInput] = useState('');
   const [customTokenInput, setCustomTokenInput] = useState('');
+  const [customApiKeyInput, setCustomApiKeyInput] = useState('');
   const [copiedUrl, setCopiedUrl] = useState(false);
 
   if (!isOpen) return null;
@@ -57,7 +58,11 @@ export const GoogleOAuthModal: React.FC<GoogleOAuthModalProps> = ({
 
   const handleSubmitManual = (e: React.FormEvent) => {
     e.preventDefault();
-    onManualConnect(spreadsheetIdInput.trim(), customTokenInput.trim() || undefined);
+    onManualConnect(
+      spreadsheetIdInput.trim(),
+      customTokenInput.trim() || undefined,
+      customApiKeyInput.trim() || undefined
+    );
     onClose();
   };
 
@@ -228,13 +233,26 @@ export const GoogleOAuthModal: React.FC<GoogleOAuthModalProps> = ({
 
               <div>
                 <label className="block text-xs font-semibold text-zinc-200 mb-1.5">
-                  {isAr ? 'Google OAuth Access Token (اختياري):' : 'Google Access Token (Optional):'}
+                  {isAr ? 'Google OAuth Access Token (اختياري للقراءة والكتابة):' : 'Google Access Token (Optional):'}
                 </label>
                 <input
                   type="password"
                   value={customTokenInput}
                   onChange={(e) => setCustomTokenInput(e.target.value)}
                   placeholder="ya29.a0AfH6SM..."
+                  className="w-full p-3 rounded-xl bg-[#050505] border border-white/[0.08] text-white font-mono text-xs focus:outline-none focus:border-emerald-500 transition"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-zinc-200 mb-1.5">
+                  {isAr ? 'Google Sheets API Key (اختياري لجلب ومزامنة البيانات):' : 'Google Sheets API Key (Optional):'}
+                </label>
+                <input
+                  type="password"
+                  value={customApiKeyInput}
+                  onChange={(e) => setCustomApiKeyInput(e.target.value)}
+                  placeholder="AIzaSy..."
                   className="w-full p-3 rounded-xl bg-[#050505] border border-white/[0.08] text-white font-mono text-xs focus:outline-none focus:border-emerald-500 transition"
                 />
               </div>
