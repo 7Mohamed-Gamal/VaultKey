@@ -1,0 +1,6 @@
+{
+  "name": "KeyVault & API Sync",
+  "description": "Quick-capture popup and manager for API keys, passwords, and tokens with automated sync to your personal Google Sheet and Chrome extension generator.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
