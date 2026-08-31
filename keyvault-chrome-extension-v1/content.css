@@ -1,0 +1,247 @@
+
+#keyvault-overlay-host {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  background: rgba(5, 5, 5, 0.75) !important;
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
+  z-index: 2147483647 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 16px !important;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Cairo', sans-serif !important;
+  box-sizing: border-box !important;
+}
+
+#keyvault-modal {
+  width: 100% !important;
+  max-width: 440px !important;
+  background: #0c0c0c !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  border-radius: 20px !important;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8), 0 0 30px rgba(16, 185, 129, 0.15) !important;
+  color: #f8fafc !important;
+  direction: rtl !important;
+  text-align: right !important;
+  overflow: hidden !important;
+  box-sizing: border-box !important;
+  animation: keyvault-pop 0.2s ease-out !important;
+}
+
+@keyframes keyvault-pop {
+  from { opacity: 0; transform: scale(0.95) translateY(10px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.kv-header {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding: 14px 18px !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+  background: #111111 !important;
+}
+
+.kv-title {
+  font-size: 14px !important;
+  font-weight: 700 !important;
+  color: #10b981 !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+}
+
+.kv-badge {
+  font-size: 10px !important;
+  background: rgba(16, 185, 129, 0.15) !important;
+  color: #34d399 !important;
+  border: 1px solid rgba(16, 185, 129, 0.3) !important;
+  padding: 2px 6px !important;
+  border-radius: 6px !important;
+  font-family: monospace !important;
+}
+
+.kv-close {
+  background: transparent !important;
+  border: none !important;
+  color: #94a3b8 !important;
+  font-size: 18px !important;
+  cursor: pointer !important;
+  padding: 4px 8px !important;
+  border-radius: 6px !important;
+  line-height: 1 !important;
+}
+
+.kv-close:hover {
+  background: #222222 !important;
+  color: #ffffff !important;
+}
+
+.kv-body {
+  padding: 16px 18px !important;
+}
+
+.kv-types {
+  display: grid !important;
+  grid-template-columns: repeat(3, 1fr) !important;
+  gap: 6px !important;
+  margin-bottom: 12px !important;
+}
+
+.kv-type-btn {
+  background: #161616 !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  color: #94a3b8 !important;
+  padding: 7px 4px !important;
+  border-radius: 8px !important;
+  font-size: 11px !important;
+  cursor: pointer !important;
+  text-align: center !important;
+  font-weight: 600 !important;
+  transition: all 0.15s !important;
+}
+
+.kv-type-btn.active {
+  background: #10b981 !important;
+  border-color: #10b981 !important;
+  color: #000000 !important;
+  font-weight: 700 !important;
+}
+
+.kv-field {
+  margin-bottom: 11px !important;
+}
+
+.kv-label {
+  display: block !important;
+  font-size: 11px !important;
+  color: #cbd5e1 !important;
+  margin-bottom: 5px !important;
+  font-weight: 600 !important;
+}
+
+.kv-input {
+  width: 100% !important;
+  background: #050505 !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  border-radius: 8px !important;
+  color: #ffffff !important;
+  padding: 8px 12px !important;
+  font-size: 12px !important;
+  box-sizing: border-box !important;
+  outline: none !important;
+  transition: border-color 0.2s !important;
+  direction: ltr !important;
+  text-align: left !important;
+}
+
+.kv-input.rtl-text {
+  direction: rtl !important;
+  text-align: right !important;
+}
+
+.kv-input:focus {
+  border-color: #10b981 !important;
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2) !important;
+}
+
+.kv-secret-wrap {
+  position: relative !important;
+  display: flex !important;
+}
+
+.kv-gen-btn {
+  position: absolute !important;
+  left: 6px !important;
+  top: 6px !important;
+  background: #1e1e1e !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  color: #34d399 !important;
+  font-size: 10px !important;
+  padding: 3px 8px !important;
+  border-radius: 6px !important;
+  cursor: pointer !important;
+  font-weight: 600 !important;
+}
+
+.kv-gen-btn:hover {
+  background: #282828 !important;
+}
+
+.kv-grid-2 {
+  display: flex !important;
+  gap: 8px !important;
+}
+
+.kv-grid-2 > div {
+  flex: 1 !important;
+}
+
+.kv-save-btn {
+  width: 100% !important;
+  background: #10b981 !important;
+  color: #000000 !important;
+  border: none !important;
+  padding: 11px !important;
+  border-radius: 10px !important;
+  font-weight: 700 !important;
+  font-size: 13px !important;
+  cursor: pointer !important;
+  margin-top: 6px !important;
+  transition: background 0.15s, transform 0.1s !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
+}
+
+.kv-save-btn:hover {
+  background: #34d399 !important;
+}
+
+.kv-save-btn:active {
+  transform: scale(0.98) !important;
+}
+
+.kv-status {
+  margin-top: 10px !important;
+  font-size: 11px !important;
+  text-align: center !important;
+  padding: 8px !important;
+  border-radius: 8px !important;
+  display: none !important;
+  font-weight: 600 !important;
+}
+
+.kv-status.success {
+  display: block !important;
+  background: rgba(16, 185, 129, 0.15) !important;
+  color: #34d399 !important;
+  border: 1px solid rgba(16, 185, 129, 0.3) !important;
+}
+
+.kv-status.error {
+  display: block !important;
+  background: rgba(239, 68, 68, 0.15) !important;
+  color: #f87171 !important;
+  border: 1px solid rgba(239, 68, 68, 0.3) !important;
+}
+
+.kv-footer {
+  margin-top: 12px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  font-size: 11px !important;
+  color: #64748b !important;
+}
+
+.kv-footer a {
+  color: #10b981 !important;
+  text-decoration: none !important;
+  font-weight: 600 !important;
+}

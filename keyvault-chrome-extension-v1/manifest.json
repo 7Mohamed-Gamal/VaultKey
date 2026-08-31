@@ -1,0 +1,65 @@
+{
+  "manifest_version": 3,
+  "name": "KeyVault & API Quick-Save",
+  "version": "1.2.0",
+  "description": "حفظ ومزامنة المفاتيح وكلمات المرور بضغطة زر Ctrl+Shift+K مباشرة إلى Google Sheets ومن أي موقع.",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://sheets.googleapis.com/*",
+    "https://docs.google.com/*",
+    "http://localhost/*",
+    "https://*/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "KeyVault Quick Capture (Ctrl+Shift+K)",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+K",
+        "mac": "Command+Shift+K"
+      },
+      "description": "Open KeyVault Quick Capture Popup"
+    },
+    "quick_capture_overlay": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+K",
+        "mac": "Command+Shift+K"
+      },
+      "description": "Toggle KeyVault In-Page Floating Quick Capture on Any Website"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
