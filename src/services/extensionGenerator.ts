@@ -31,11 +31,7 @@ export async function generateChromeExtensionZip(config: ExtensionGeneratorOptio
       "tabs"
     ],
     host_permissions: [
-      "https://sheets.googleapis.com/*",
-      "https://docs.google.com/*",
-      "https://script.google.com/*",
-      "http://localhost/*",
-      "https://*/*"
+      "<all_urls>"
     ],
     action: {
       default_popup: "popup.html",
@@ -420,9 +416,13 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
-// Listen for messages from background script
+// Listen for messages from background script & popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.action === 'TOGGLE_KEYVAULT_MODAL') {
+  if (request.action === 'GET_PAGE_INFO') {
+    const email = extractPageEmail();
+    sendResponse({ url: window.location.href, email: email });
+    return true;
+  } else if (request.action === 'TOGGLE_KEYVAULT_MODAL') {
     toggleKeyVaultModal();
     sendResponse({ success: true });
   } else if (request.action === 'SYNC_SECRET_TO_APP') {
@@ -435,6 +435,173 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     sendResponse({ success: true });
   }
 });
+
+function extractPageEmail() {
+  const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/gi;
+  const ignorePrefixes = [
+    'support@', 'info@', 'contact@', 'sales@', 'help@', 'privacy@', 
+    'billing@', 'legal@', 'security@', 'admin@', 'noreply@', 'no-reply@', 
+    'team@', 'marketing@', 'press@', 'jobs@', 'careers@', 'feedback@',
+    'notification@', 'notifications@', 'service@'
+  ];
+
+  function isValidEmail(em) {
+    if (!em || typeof em !== 'string') return false;
+    const clean = em.trim().toLowerCase();
+    if (clean.length < 5 || clean.length > 80) return false;
+    if (/\.(png|jpg|jpeg|gif|svg|webp|ico|css|js)$/i.test(clean)) return false;
+    if (clean.includes('example.com') || clean.includes('yourdomain') || clean.includes('domain.com')) return false;
+    for (const prefix of ignorePrefixes) {
+      if (clean.startsWith(prefix)) return false;
+    }
+    return true;
+  }
+
+  // 1. Attributes on user / profile / avatar elements
+  const attrSelectors = [
+    '[aria-label*="@"]',
+    '[title*="@"]',
+    '[data-email]',
+    '[data-user-email]',
+    '[data-profile-email]',
+    '[data-account-email]',
+    '[data-user*="@"]',
+    '[data-login*="@"]',
+    'img[alt*="@"]'
+  ];
+  for (const sel of attrSelectors) {
+    const els = document.querySelectorAll(sel);
+    for (const el of els) {
+      const raw = el.getAttribute('data-email') ||
+                  el.getAttribute('data-user-email') ||
+                  el.getAttribute('data-profile-email') ||
+                  el.getAttribute('data-account-email') ||
+                  el.getAttribute('aria-label') ||
+                  el.getAttribute('title') ||
+                  el.getAttribute('alt') ||
+                  el.getAttribute('data-user') ||
+                  el.getAttribute('data-login') || '';
+      const matches = raw.match(emailRegex);
+      if (matches) {
+        for (const m of matches) {
+          if (isValidEmail(m)) return m;
+        }
+      }
+    }
+  }
+
+  // 2. Meta tags
+  const metaSelectors = [
+    'meta[name="user-email"]',
+    'meta[name="email"]',
+    'meta[property="profile:email"]'
+  ];
+  for (const sel of metaSelectors) {
+    const meta = document.querySelector(sel);
+    if (meta) {
+      const content = meta.getAttribute('content') || '';
+      const matches = content.match(emailRegex);
+      if (matches) {
+        for (const m of matches) {
+          if (isValidEmail(m)) return m;
+        }
+      }
+    }
+  }
+
+  // 3. JSON Data in Scripts (Next.js __NEXT_DATA__, JSON-LD, etc.)
+  const jsonScripts = document.querySelectorAll('script[type="application/json"], script[type="application/ld+json"], script#__NEXT_DATA__');
+  for (const s of jsonScripts) {
+    const text = s.textContent || '';
+    if (text.includes('@')) {
+      const m = text.match(/"email"\s*:\s*"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})"/i)
+             || text.match(/"user_email"\s*:\s*"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})"/i);
+      if (m && isValidEmail(m[1])) return m[1];
+    }
+  }
+
+  // 4. localStorage & sessionStorage
+  try {
+    const storages = [localStorage, sessionStorage];
+    for (const st of storages) {
+      for (let i = 0; i < st.length; i++) {
+        const key = st.key(i);
+        if (!key) continue;
+        const val = st.getItem(key);
+        if (val && val.includes('@') && val.length < 10000) {
+          const m = val.match(/"email"\s*:\s*"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})"/i)
+                 || val.match(/"user_email"\s*:\s*"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})"/i)
+                 || val.match(emailRegex);
+          if (m) {
+            for (const em of (Array.isArray(m) ? m : [m[1]])) {
+              if (isValidEmail(em)) return em;
+            }
+          }
+        }
+      }
+    }
+  } catch(e) {}
+
+  // 5. User / Profile / Header / Nav containers
+  const containerSelectors = [
+    'header',
+    'nav',
+    'aside',
+    '[class*="profile" i]',
+    '[class*="account" i]',
+    '[class*="user" i]',
+    '[class*="avatar" i]',
+    '[id*="profile" i]',
+    '[id*="account" i]',
+    '[id*="user" i]',
+    '[data-testid*="user" i]',
+    '[data-testid*="profile" i]',
+    '[aria-haspopup="menu"]'
+  ];
+  for (const sel of containerSelectors) {
+    const containers = document.querySelectorAll(sel);
+    for (const c of containers) {
+      const text = c.innerText || c.textContent || '';
+      if (text.includes('@')) {
+        const matches = text.match(emailRegex);
+        if (matches) {
+          for (const m of matches) {
+            if (isValidEmail(m)) return m;
+          }
+        }
+      }
+    }
+  }
+
+  // 6. Input fields with existing value
+  const inputs = document.querySelectorAll('input[type="email"], input[name*="email" i], input[id*="email" i]');
+  for (const inp of inputs) {
+    const val = inp.value || inp.getAttribute('value') || '';
+    if (val && val.includes('@')) {
+      const matches = val.match(emailRegex);
+      if (matches) {
+        for (const m of matches) {
+          if (isValidEmail(m)) return m;
+        }
+      }
+    }
+  }
+
+  // 7. Mailto links
+  const mailtos = document.querySelectorAll('a[href^="mailto:"]');
+  for (const a of mailtos) {
+    const href = a.getAttribute('href') || '';
+    const matches = href.replace('mailto:', '').match(emailRegex);
+    if (matches) {
+      for (const m of matches) {
+        if (isValidEmail(m)) return m;
+      }
+    }
+  }
+
+  return '';
+}
+
 
 function toggleKeyVaultModal() {
   if (isModalOpen) {
@@ -463,53 +630,7 @@ function createKeyVaultModal() {
   // Auto-detect logged in user email
   let detectedEmail = '';
   try {
-    const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/gi;
-    const ignore = ['support@', 'info@', 'contact@', 'sales@', 'help@', 'privacy@', 'billing@', 'legal@', 'security@', 'admin@', 'noreply@', 'no-reply@', 'team@', 'marketing@'];
-    const isValid = (em) => {
-      if (!em) return false;
-      const c = em.trim().toLowerCase();
-      if (c.endsWith('.png') || c.endsWith('.jpg') || c.endsWith('.svg') || c.endsWith('.gif') || c.endsWith('.webp')) return false;
-      return !ignore.some(p => c.startsWith(p));
-    };
-
-    const attrs = document.querySelectorAll('[aria-label*="@"], [title*="@"], [data-email], [data-user-email], [data-login*="@"]');
-    for (const el of attrs) {
-      const raw = el.getAttribute('data-email') || el.getAttribute('data-user-email') || el.getAttribute('aria-label') || el.getAttribute('title') || '';
-      const m = raw.match(emailRegex);
-      if (m) {
-        for (const em of m) {
-          if (isValid(em)) { detectedEmail = em; break; }
-        }
-        if (detectedEmail) break;
-      }
-    }
-
-    if (!detectedEmail) {
-      const containers = document.querySelectorAll('header, nav, [class*="profile" i], [class*="account" i], [class*="user" i], [id*="profile" i], [id*="account" i], [class*="avatar" i]');
-      for (const c of containers) {
-        const m = (c.innerText || '').match(emailRegex);
-        if (m) {
-          for (const em of m) {
-            if (isValid(em)) { detectedEmail = em; break; }
-          }
-          if (detectedEmail) break;
-        }
-      }
-    }
-
-    if (!detectedEmail) {
-      const inputs = document.querySelectorAll('input[type="email"], input[name*="email" i], input[id*="email" i]');
-      for (const inp of inputs) {
-        const val = inp.value || '';
-        const m = val.match(emailRegex);
-        if (m) {
-          for (const em of m) {
-            if (isValid(em)) { detectedEmail = em; break; }
-          }
-          if (detectedEmail) break;
-        }
-      }
-    }
+    detectedEmail = extractPageEmail() || '';
   } catch(e) {}
 
   const host = document.createElement('div');
@@ -846,89 +967,388 @@ function createKeyVaultModal() {
   // 7. popup.js
   const popupJs = `let selectedType = 'api_key';
 
+// Injectable extractor function for scripting fallback
+function extractPageEmail() {
+  const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/gi;
+  const ignorePrefixes = [
+    'support@', 'info@', 'contact@', 'sales@', 'help@', 'privacy@', 
+    'billing@', 'legal@', 'security@', 'admin@', 'noreply@', 'no-reply@', 
+    'team@', 'marketing@', 'press@', 'jobs@', 'careers@', 'feedback@',
+    'notification@', 'notifications@', 'service@'
+  ];
+
+  function isValidEmail(em) {
+    if (!em || typeof em !== 'string') return false;
+    const clean = em.trim().toLowerCase();
+    if (clean.length < 5 || clean.length > 80) return false;
+    if (/\.(png|jpg|jpeg|gif|svg|webp|ico|css|js)$/i.test(clean)) return false;
+    if (clean.includes('example.com') || clean.includes('yourdomain') || clean.includes('domain.com')) return false;
+    for (const prefix of ignorePrefixes) {
+      if (clean.startsWith(prefix)) return false;
+    }
+    return true;
+  }
+
+  // 1. Attributes on user / profile / avatar elements
+  const attrSelectors = [
+    '[aria-label*="@"]',
+    '[title*="@"]',
+    '[data-email]',
+    '[data-user-email]',
+    '[data-profile-email]',
+    '[data-account-email]',
+    '[data-user*="@"]',
+    '[data-login*="@"]',
+    'img[alt*="@"]'
+  ];
+  for (const sel of attrSelectors) {
+    const els = document.querySelectorAll(sel);
+    for (const el of els) {
+      const raw = el.getAttribute('data-email') ||
+                  el.getAttribute('data-user-email') ||
+                  el.getAttribute('data-profile-email') ||
+                  el.getAttribute('data-account-email') ||
+                  el.getAttribute('aria-label') ||
+                  el.getAttribute('title') ||
+                  el.getAttribute('alt') ||
+                  el.getAttribute('data-user') ||
+                  el.getAttribute('data-login') || '';
+      const matches = raw.match(emailRegex);
+      if (matches) {
+        for (const m of matches) {
+          if (isValidEmail(m)) return m;
+        }
+      }
+    }
+  }
+
+  // 2. Meta tags
+  const metaSelectors = [
+    'meta[name="user-email"]',
+    'meta[name="email"]',
+    'meta[property="profile:email"]'
+  ];
+  for (const sel of metaSelectors) {
+    const meta = document.querySelector(sel);
+    if (meta) {
+      const content = meta.getAttribute('content') || '';
+      const matches = content.match(emailRegex);
+      if (matches) {
+        for (const m of matches) {
+          if (isValidEmail(m)) return m;
+        }
+      }
+    }
+  }
+
+  // 3. JSON Data in Scripts (Next.js __NEXT_DATA__, JSON-LD, etc.)
+  const jsonScripts = document.querySelectorAll('script[type="application/json"], script[type="application/ld+json"], script#__NEXT_DATA__');
+  for (const s of jsonScripts) {
+    const text = s.textContent || '';
+    if (text.includes('@')) {
+      const m = text.match(/"email"\s*:\s*"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})"/i)
+             || text.match(/"user_email"\s*:\s*"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})"/i);
+      if (m && isValidEmail(m[1])) return m[1];
+    }
+  }
+
+  // 4. localStorage & sessionStorage
+  try {
+    const storages = [localStorage, sessionStorage];
+    for (const st of storages) {
+      for (let i = 0; i < st.length; i++) {
+        const key = st.key(i);
+        if (!key) continue;
+        const val = st.getItem(key);
+        if (val && val.includes('@') && val.length < 10000) {
+          const m = val.match(/"email"\s*:\s*"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})"/i)
+                 || val.match(/"user_email"\s*:\s*"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})"/i)
+                 || val.match(emailRegex);
+          if (m) {
+            for (const em of (Array.isArray(m) ? m : [m[1]])) {
+              if (isValidEmail(em)) return em;
+            }
+          }
+        }
+      }
+    }
+  } catch(e) {}
+
+  // 5. User / Profile / Header / Nav containers
+  const containerSelectors = [
+    'header',
+    'nav',
+    'aside',
+    '[class*="profile" i]',
+    '[class*="account" i]',
+    '[class*="user" i]',
+    '[class*="avatar" i]',
+    '[id*="profile" i]',
+    '[id*="account" i]',
+    '[id*="user" i]',
+    '[data-testid*="user" i]',
+    '[data-testid*="profile" i]',
+    '[aria-haspopup="menu"]'
+  ];
+  for (const sel of containerSelectors) {
+    const containers = document.querySelectorAll(sel);
+    for (const c of containers) {
+      const text = c.innerText || c.textContent || '';
+      if (text.includes('@')) {
+        const matches = text.match(emailRegex);
+        if (matches) {
+          for (const m of matches) {
+            if (isValidEmail(m)) return m;
+          }
+        }
+      }
+    }
+  }
+
+  // 6. Input fields with existing value
+  const inputs = document.querySelectorAll('input[type="email"], input[name*="email" i], input[id*="email" i]');
+  for (const inp of inputs) {
+    const val = inp.value || inp.getAttribute('value') || '';
+    if (val && val.includes('@')) {
+      const matches = val.match(emailRegex);
+      if (matches) {
+        for (const m of matches) {
+          if (isValidEmail(m)) return m;
+        }
+      }
+    }
+  }
+
+  // 7. Mailto links
+  const mailtos = document.querySelectorAll('a[href^="mailto:"]');
+  for (const a of mailtos) {
+    const href = a.getAttribute('href') || '';
+    const matches = href.replace('mailto:', '').match(emailRegex);
+    if (matches) {
+      for (const m of matches) {
+        if (isValidEmail(m)) return m;
+      }
+    }
+  }
+
+  return '';
+}
+
 // Auto detect and fetch full current URL and user email
 chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
   if (tabs && tabs[0]) {
-    try {
-      const fullUrl = tabs[0].url || tabs[0].pendingUrl || '';
-      if (fullUrl) {
-        const serviceInput = document.getElementById('serviceName');
-        if (serviceInput) {
-          serviceInput.value = fullUrl;
-        }
-        // Focus on secret value field directly since URL is already captured
-        const secretInput = document.getElementById('secretValue');
-        if (secretInput) {
-          secretInput.focus();
-        }
+    const currentTab = tabs[0];
+    const fullUrl = currentTab.url || currentTab.pendingUrl || '';
+    
+    if (fullUrl && !fullUrl.startsWith('chrome://') && !fullUrl.startsWith('edge://') && !fullUrl.startsWith('about:')) {
+      const serviceInput = document.getElementById('serviceName');
+      if (serviceInput) {
+        serviceInput.value = fullUrl;
       }
-    } catch(e) {
-      console.error('Error fetching tab URL:', e);
-    }
 
-    // Attempt to extract logged in user email from the active tab DOM
-    if (tabs[0].id && tabs[0].url && !tabs[0].url.startsWith('chrome://') && !tabs[0].url.startsWith('edge://') && !tabs[0].url.startsWith('about:')) {
-      chrome.scripting.executeScript({
-        target: { tabId: tabs[0].id },
-        func: () => {
-          try {
-            const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/gi;
-            const ignore = ['support@', 'info@', 'contact@', 'sales@', 'help@', 'privacy@', 'billing@', 'legal@', 'security@', 'admin@', 'noreply@', 'no-reply@', 'team@', 'marketing@'];
-            const isValid = (em) => {
-              if (!em) return false;
-              const c = em.trim().toLowerCase();
-              if (c.endsWith('.png') || c.endsWith('.jpg') || c.endsWith('.svg') || c.endsWith('.gif') || c.endsWith('.webp')) return false;
-              return !ignore.some(p => c.startsWith(p));
-            };
-
-            // 1. Check profile / account attributes
-            const attrs = document.querySelectorAll('[aria-label*="@"], [title*="@"], [data-email], [data-user-email], [data-login*="@"]');
-            for (const el of attrs) {
-              const raw = el.getAttribute('data-email') || el.getAttribute('data-user-email') || el.getAttribute('aria-label') || el.getAttribute('title') || '';
-              const m = raw.match(emailRegex);
-              if (m) {
-                for (const em of m) {
-                  if (isValid(em)) return em;
-                }
-              }
-            }
-
-            // 2. Profile / Account container text in header/nav
-            const containers = document.querySelectorAll('header, nav, [class*="profile" i], [class*="account" i], [class*="user" i], [id*="profile" i], [id*="account" i], [class*="avatar" i]');
-            for (const c of containers) {
-              const m = (c.innerText || '').match(emailRegex);
-              if (m) {
-                for (const em of m) {
-                  if (isValid(em)) return em;
-                }
-              }
-            }
-
-            // 3. Input email fields with value
-            const inputs = document.querySelectorAll('input[type="email"], input[name*="email" i], input[id*="email" i]');
-            for (const inp of inputs) {
-              const val = inp.value || '';
-              const m = val.match(emailRegex);
-              if (m) {
-                for (const em of m) {
-                  if (isValid(em)) return em;
-                }
-              }
-            }
-          } catch(e) {}
-          return '';
-        }
-      }).then((results) => {
-        if (results && results[0] && results[0].result) {
+      // Method 1: Ask content.js directly (fastest & has full DOM & storage context)
+      chrome.tabs.sendMessage(currentTab.id, { action: 'GET_PAGE_INFO' }, (response) => {
+        if (!chrome.runtime.lastError && response && response.email) {
           const emailInput = document.getElementById('userEmail');
           if (emailInput && !emailInput.value) {
-            emailInput.value = results[0].result;
+            emailInput.value = response.email;
           }
+        } else {
+          // Method 2: Fallback to chrome.scripting.executeScript
+          runDirectScriptDetection(currentTab.id);
         }
-      }).catch(() => {});
+      });
+    }
+
+    // Focus secret value field
+    const secretInput = document.getElementById('secretValue');
+    if (secretInput) {
+      secretInput.focus();
     }
   }
 });
+
+function runDirectScriptDetection(tabId) {
+  try {
+    chrome.scripting.executeScript({
+      target: { tabId: tabId },
+      func: function extractPageEmail() {
+  const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/gi;
+  const ignorePrefixes = [
+    'support@', 'info@', 'contact@', 'sales@', 'help@', 'privacy@', 
+    'billing@', 'legal@', 'security@', 'admin@', 'noreply@', 'no-reply@', 
+    'team@', 'marketing@', 'press@', 'jobs@', 'careers@', 'feedback@',
+    'notification@', 'notifications@', 'service@'
+  ];
+
+  function isValidEmail(em) {
+    if (!em || typeof em !== 'string') return false;
+    const clean = em.trim().toLowerCase();
+    if (clean.length < 5 || clean.length > 80) return false;
+    if (/\.(png|jpg|jpeg|gif|svg|webp|ico|css|js)$/i.test(clean)) return false;
+    if (clean.includes('example.com') || clean.includes('yourdomain') || clean.includes('domain.com')) return false;
+    for (const prefix of ignorePrefixes) {
+      if (clean.startsWith(prefix)) return false;
+    }
+    return true;
+  }
+
+  // 1. Attributes on user / profile / avatar elements
+  const attrSelectors = [
+    '[aria-label*="@"]',
+    '[title*="@"]',
+    '[data-email]',
+    '[data-user-email]',
+    '[data-profile-email]',
+    '[data-account-email]',
+    '[data-user*="@"]',
+    '[data-login*="@"]',
+    'img[alt*="@"]'
+  ];
+  for (const sel of attrSelectors) {
+    const els = document.querySelectorAll(sel);
+    for (const el of els) {
+      const raw = el.getAttribute('data-email') ||
+                  el.getAttribute('data-user-email') ||
+                  el.getAttribute('data-profile-email') ||
+                  el.getAttribute('data-account-email') ||
+                  el.getAttribute('aria-label') ||
+                  el.getAttribute('title') ||
+                  el.getAttribute('alt') ||
+                  el.getAttribute('data-user') ||
+                  el.getAttribute('data-login') || '';
+      const matches = raw.match(emailRegex);
+      if (matches) {
+        for (const m of matches) {
+          if (isValidEmail(m)) return m;
+        }
+      }
+    }
+  }
+
+  // 2. Meta tags
+  const metaSelectors = [
+    'meta[name="user-email"]',
+    'meta[name="email"]',
+    'meta[property="profile:email"]'
+  ];
+  for (const sel of metaSelectors) {
+    const meta = document.querySelector(sel);
+    if (meta) {
+      const content = meta.getAttribute('content') || '';
+      const matches = content.match(emailRegex);
+      if (matches) {
+        for (const m of matches) {
+          if (isValidEmail(m)) return m;
+        }
+      }
+    }
+  }
+
+  // 3. JSON Data in Scripts (Next.js __NEXT_DATA__, JSON-LD, etc.)
+  const jsonScripts = document.querySelectorAll('script[type="application/json"], script[type="application/ld+json"], script#__NEXT_DATA__');
+  for (const s of jsonScripts) {
+    const text = s.textContent || '';
+    if (text.includes('@')) {
+      const m = text.match(/"email"\s*:\s*"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})"/i)
+             || text.match(/"user_email"\s*:\s*"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})"/i);
+      if (m && isValidEmail(m[1])) return m[1];
+    }
+  }
+
+  // 4. localStorage & sessionStorage
+  try {
+    const storages = [localStorage, sessionStorage];
+    for (const st of storages) {
+      for (let i = 0; i < st.length; i++) {
+        const key = st.key(i);
+        if (!key) continue;
+        const val = st.getItem(key);
+        if (val && val.includes('@') && val.length < 10000) {
+          const m = val.match(/"email"\s*:\s*"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})"/i)
+                 || val.match(/"user_email"\s*:\s*"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})"/i)
+                 || val.match(emailRegex);
+          if (m) {
+            for (const em of (Array.isArray(m) ? m : [m[1]])) {
+              if (isValidEmail(em)) return em;
+            }
+          }
+        }
+      }
+    }
+  } catch(e) {}
+
+  // 5. User / Profile / Header / Nav containers
+  const containerSelectors = [
+    'header',
+    'nav',
+    'aside',
+    '[class*="profile" i]',
+    '[class*="account" i]',
+    '[class*="user" i]',
+    '[class*="avatar" i]',
+    '[id*="profile" i]',
+    '[id*="account" i]',
+    '[id*="user" i]',
+    '[data-testid*="user" i]',
+    '[data-testid*="profile" i]',
+    '[aria-haspopup="menu"]'
+  ];
+  for (const sel of containerSelectors) {
+    const containers = document.querySelectorAll(sel);
+    for (const c of containers) {
+      const text = c.innerText || c.textContent || '';
+      if (text.includes('@')) {
+        const matches = text.match(emailRegex);
+        if (matches) {
+          for (const m of matches) {
+            if (isValidEmail(m)) return m;
+          }
+        }
+      }
+    }
+  }
+
+  // 6. Input fields with existing value
+  const inputs = document.querySelectorAll('input[type="email"], input[name*="email" i], input[id*="email" i]');
+  for (const inp of inputs) {
+    const val = inp.value || inp.getAttribute('value') || '';
+    if (val && val.includes('@')) {
+      const matches = val.match(emailRegex);
+      if (matches) {
+        for (const m of matches) {
+          if (isValidEmail(m)) return m;
+        }
+      }
+    }
+  }
+
+  // 7. Mailto links
+  const mailtos = document.querySelectorAll('a[href^="mailto:"]');
+  for (const a of mailtos) {
+    const href = a.getAttribute('href') || '';
+    const matches = href.replace('mailto:', '').match(emailRegex);
+    if (matches) {
+      for (const m of matches) {
+        if (isValidEmail(m)) return m;
+      }
+    }
+  }
+
+  return '';
+}
+    }).then((results) => {
+      if (results && results[0] && results[0].result) {
+        const emailInput = document.getElementById('userEmail');
+        if (emailInput && !emailInput.value) {
+          emailInput.value = results[0].result;
+        }
+      }
+    }).catch((err) => {
+      console.warn('Script execution notice:', err);
+    });
+  } catch(e) {}
+}
 
 // Load settings into inputs
 chrome.storage.local.get(['spreadsheetId', 'accessToken', 'webhookUrl', 'appUrl'], (res) => {
