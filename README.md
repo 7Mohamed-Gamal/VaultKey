@@ -81,6 +81,58 @@ http://localhost:3000
 
 ---
 
+## 📊 ربط ومزامنة Google Sheets (Google Sheets Integration)
+
+### ⚡ الخيار الأفضل والموصى به (Webhook دائم بدون أي انتهاء صلاحية):
+هذا الخيار هو الأسهل والأسرع؛ لا يتطلب إنشاء مشروع في Google Cloud Console، ولا تنتهي صلاحيته بعد 60 دقيقة، ويعمل 24/7 للمزامنة المباشرة من التطبيق والإضافة.
+
+#### كود Google Apps Script:
+```javascript
+function doPost(e) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('Vault_Secrets') || ss.getActiveSheet();
+  var data = JSON.parse(e.postData.contents);
+
+  if (data.action === 'sync_all') {
+    sheet.clear();
+    if (data.headers) sheet.appendRow(data.headers);
+    if (data.secrets && data.secrets.length > 0) {
+      data.secrets.forEach(function(s) {
+        sheet.appendRow([
+          s.id, (s.type || '').toUpperCase(), s.serviceName,
+          s.usernameOrEmail || '', s.secretValue, s.environment || 'production',
+          s.project || 'General', (s.tags || []).join(', '), s.notes || '',
+          s.createdAt || new Date().toISOString(), s.updatedAt || new Date().toISOString()
+        ]);
+      });
+    }
+  } else {
+    var s = data.secret;
+    sheet.appendRow([
+      s.id, (s.type || '').toUpperCase(), s.serviceName,
+      s.usernameOrEmail || '', s.secretValue, s.environment || 'production',
+      s.project || 'General', (s.tags || []).join(', '), s.notes || '',
+      s.createdAt || new Date().toISOString(), s.updatedAt || new Date().toISOString()
+    ]);
+  }
+
+  return ContentService.createTextOutput(JSON.stringify({ result: 'success' }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+```
+
+#### خطوات التفعيل في دقيقة واحدة:
+1. افتح جدول **Google Sheet** الخاص بك.
+2. من القائمة العلوية اضغط على **الإضافات (Extensions) > Apps Script**.
+3. احذف أي كود موجود والصق الكود أعلاه واضغط على زر الحفظ (أيقونة القرص 💾).
+4. اضغط على زر **نشر (Deploy) > نشر جديد (New deployment)**.
+5. اختر نوع النشر: **تطبيق ويب (Web app)**.
+6. في إعدادات النشر:
+   - **تنفيذ باسم (Execute as)**: `حسابي (Me)`
+   - **من لديه حق الوصول (Who has access)**: **أي شخص (Anyone)**
+7. اضغط **نشر (Deploy)** ثم انسخ **رابط تطبيق الويب (Web app URL)**.
+8. في تطبيق KeyVault، اضغط على **تفعيل مزامنة Google Sheets**، والصق الرابط في تبويب **Webhook دائم** واضغط حفظ.
+
 ## 🐳 التشغيل باستخدام Docker (Docker Run)
 
 لتشغيل المشروع كحاوية معزولة فائقة السرعة بضغطة زر:

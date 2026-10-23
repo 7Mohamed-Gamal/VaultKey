@@ -37,7 +37,8 @@ export const ChromeExtensionModal: React.FC<ChromeExtensionModalProps> = ({
 
   // Simulated extension popup state for live preview
   const [simType, setSimType] = useState<'api_key' | 'password' | 'token'>('api_key');
-  const [simService, setSimService] = useState('OpenAI Platform');
+  const [simService, setSimService] = useState('https://platform.openai.com/api-keys');
+  const [simEmail, setSimEmail] = useState('developer@company.com');
   const [simSecret, setSimSecret] = useState('sk-proj-78AbCdEfGhIjKlMnOpQrStUv');
   const [simSaved, setSimSaved] = useState(false);
 
@@ -50,6 +51,7 @@ export const ChromeExtensionModal: React.FC<ChromeExtensionModalProps> = ({
         appUrl: window.location.origin,
         spreadsheetId: googleConfig.spreadsheetId,
         spreadsheetUrl: googleConfig.spreadsheetUrl,
+        webhookUrl: googleConfig.webhookUrl,
         accessToken: googleConfig.accessToken,
         clientId: googleConfig.clientId
       });
@@ -241,7 +243,7 @@ export const ChromeExtensionModal: React.FC<ChromeExtensionModalProps> = ({
                 <div className="space-y-2 text-xs">
                   <div>
                     <label className="text-[10px] text-zinc-400 block mb-1">
-                      {isAr ? 'اسم الموقع / الخدمة' : 'Service / Website'}
+                      {isAr ? 'اسم الخدمة / الموقع' : 'Service / Website'}
                     </label>
                     <input
                       type="text"
@@ -260,6 +262,19 @@ export const ChromeExtensionModal: React.FC<ChromeExtensionModalProps> = ({
                       value={simSecret}
                       onChange={(e) => setSimSecret(e.target.value)}
                       className="w-full px-2.5 py-1.5 rounded-lg bg-[#0c0c0c] border border-white/[0.08] text-emerald-400 font-mono text-xs"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] text-zinc-400 block mb-1">
+                      {isAr ? 'الحساب / البريد (يُكتشف تلقائياً)' : 'Account / Email (Auto-detected)'}
+                    </label>
+                    <input
+                      type="text"
+                      dir="auto"
+                      value={simEmail}
+                      onChange={(e) => setSimEmail(e.target.value)}
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-[#0c0c0c] border border-white/[0.08] text-zinc-300 text-xs"
                     />
                   </div>
 

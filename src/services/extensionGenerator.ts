@@ -5,6 +5,7 @@ export interface ExtensionGeneratorOptions {
   appUrl: string;
   spreadsheetId?: string | null;
   spreadsheetUrl?: string | null;
+  webhookUrl?: string | null;
   accessToken?: string | null;
   clientId?: string | null;
 }
@@ -32,6 +33,7 @@ export async function generateChromeExtensionZip(config: ExtensionGeneratorOptio
     host_permissions: [
       "https://sheets.googleapis.com/*",
       "https://docs.google.com/*",
+      "https://script.google.com/*",
       "http://localhost/*",
       "https://*/*"
     ],
@@ -86,6 +88,7 @@ const KEYVAULT_DEFAULT_CONFIG = {
   appUrl: ${JSON.stringify(safeAppUrl)},
   spreadsheetId: ${JSON.stringify(safeSpreadsheetId)},
   spreadsheetUrl: ${JSON.stringify(safeSpreadsheetUrl)},
+  webhookUrl: ${JSON.stringify(config.webhookUrl || "")},
   accessToken: ${JSON.stringify(safeAccessToken)}
 };
 `;
@@ -97,13 +100,16 @@ importScripts('config.js');
 
 chrome.runtime.onInstalled.addListener(() => {
   // Save pre-configured values to local storage if not present
-  chrome.storage.local.get(['spreadsheetId', 'accessToken', 'appUrl'], (res) => {
+  chrome.storage.local.get(['spreadsheetId', 'accessToken', 'webhookUrl', 'appUrl'], (res) => {
     const updates = {};
     if (!res.spreadsheetId && KEYVAULT_DEFAULT_CONFIG.spreadsheetId) {
       updates.spreadsheetId = KEYVAULT_DEFAULT_CONFIG.spreadsheetId;
     }
     if (!res.accessToken && KEYVAULT_DEFAULT_CONFIG.accessToken) {
       updates.accessToken = KEYVAULT_DEFAULT_CONFIG.accessToken;
+    }
+    if (!res.webhookUrl && KEYVAULT_DEFAULT_CONFIG.webhookUrl) {
+      updates.webhookUrl = KEYVAULT_DEFAULT_CONFIG.webhookUrl;
     }
     if (!res.appUrl && KEYVAULT_DEFAULT_CONFIG.appUrl) {
       updates.appUrl = KEYVAULT_DEFAULT_CONFIG.appUrl;
@@ -448,13 +454,61 @@ function createKeyVaultModal() {
   removeKeyVaultModal();
   isModalOpen = true;
 
-  // Auto-detect service from domain
-  let detectedName = '';
+  // Auto-detect full current URL
+  let detectedUrl = '';
   try {
-    const domain = window.location.hostname.replace('www.', '');
-    const parts = domain.split('.');
-    if (parts.length > 0 && parts[0]) {
-      detectedName = parts[0].charAt(0).toUpperCase() + parts[0].slice(1);
+    detectedUrl = window.location.href || '';
+  } catch(e) {}
+
+  // Auto-detect logged in user email
+  let detectedEmail = '';
+  try {
+    const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/gi;
+    const ignore = ['support@', 'info@', 'contact@', 'sales@', 'help@', 'privacy@', 'billing@', 'legal@', 'security@', 'admin@', 'noreply@', 'no-reply@', 'team@', 'marketing@'];
+    const isValid = (em) => {
+      if (!em) return false;
+      const c = em.trim().toLowerCase();
+      if (c.endsWith('.png') || c.endsWith('.jpg') || c.endsWith('.svg') || c.endsWith('.gif') || c.endsWith('.webp')) return false;
+      return !ignore.some(p => c.startsWith(p));
+    };
+
+    const attrs = document.querySelectorAll('[aria-label*="@"], [title*="@"], [data-email], [data-user-email], [data-login*="@"]');
+    for (const el of attrs) {
+      const raw = el.getAttribute('data-email') || el.getAttribute('data-user-email') || el.getAttribute('aria-label') || el.getAttribute('title') || '';
+      const m = raw.match(emailRegex);
+      if (m) {
+        for (const em of m) {
+          if (isValid(em)) { detectedEmail = em; break; }
+        }
+        if (detectedEmail) break;
+      }
+    }
+
+    if (!detectedEmail) {
+      const containers = document.querySelectorAll('header, nav, [class*="profile" i], [class*="account" i], [class*="user" i], [id*="profile" i], [id*="account" i], [class*="avatar" i]');
+      for (const c of containers) {
+        const m = (c.innerText || '').match(emailRegex);
+        if (m) {
+          for (const em of m) {
+            if (isValid(em)) { detectedEmail = em; break; }
+          }
+          if (detectedEmail) break;
+        }
+      }
+    }
+
+    if (!detectedEmail) {
+      const inputs = document.querySelectorAll('input[type="email"], input[name*="email" i], input[id*="email" i]');
+      for (const inp of inputs) {
+        const val = inp.value || '';
+        const m = val.match(emailRegex);
+        if (m) {
+          for (const em of m) {
+            if (isValid(em)) { detectedEmail = em; break; }
+          }
+          if (detectedEmail) break;
+        }
+      }
     }
   } catch(e) {}
 
@@ -479,8 +533,8 @@ function createKeyVaultModal() {
         </div>
 
         <div class="kv-field">
-          <label class="kv-label">اسم الخدمة / المنصة</label>
-          <input type="text" id="kv-serviceName" class="kv-input rtl-text" value="\${detectedName}" placeholder="مثال: OpenAI, GitHub, Stripe..." />
+          <label class="kv-label">اسم الخدمة / الموقع</label>
+          <input type="text" id="kv-serviceName" class="kv-input" dir="auto" value="\${detectedUrl}" placeholder="https://example.com/..." />
         </div>
 
         <div class="kv-field">
@@ -494,7 +548,7 @@ function createKeyVaultModal() {
         <div class="kv-grid-2">
           <div class="kv-field">
             <label class="kv-label">الحساب / البريد (اختياري)</label>
-            <input type="text" id="kv-userEmail" class="kv-input" placeholder="dev@example.com" />
+            <input type="text" id="kv-userEmail" class="kv-input" dir="auto" value="\${detectedEmail}" placeholder="dev@example.com" />
           </div>
 
           <div class="kv-field">
@@ -563,7 +617,7 @@ function createKeyVaultModal() {
   setTimeout(() => {
     const sInput = document.getElementById('kv-secretValue');
     const nameInput = document.getElementById('kv-serviceName');
-    if (detectedName) {
+    if (detectedUrl) {
       sInput.focus();
     } else {
       nameInput.focus();
@@ -724,7 +778,7 @@ function createKeyVaultModal() {
 
     <div class="field">
       <label class="label">اسم الخدمة / الموقع</label>
-      <input type="text" id="serviceName" class="input" placeholder="مثال: OpenAI, GitHub, Stripe..." />
+      <input type="text" id="serviceName" class="input" dir="auto" placeholder="https://example.com/..." />
     </div>
 
     <div class="field">
@@ -737,7 +791,7 @@ function createKeyVaultModal() {
 
     <div class="field">
       <label class="label">الحساب / البريد (اختياري)</label>
-      <input type="text" id="userEmail" class="input" placeholder="dev@example.com" />
+      <input type="text" id="userEmail" class="input" dir="auto" placeholder="dev@example.com" />
     </div>
 
     <div class="field">
@@ -758,11 +812,15 @@ function createKeyVaultModal() {
   <!-- Settings Tab -->
   <div id="tab-settings-content" style="display: none;">
     <div class="field">
+      <label class="label">رابط Webhook (Google Apps Script) دائم وبدون انتهاء صلاحية</label>
+      <input type="url" id="cfgWebhookUrl" class="input" placeholder="https://script.google.com/macros/s/.../exec" />
+    </div>
+    <div class="field">
       <label class="label">معرف جدول البيانات (Spreadsheet ID)</label>
       <input type="text" id="cfgSpreadsheetId" class="input" placeholder="1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms" />
     </div>
     <div class="field">
-      <label class="label">Google OAuth Access Token (اختياري للمزامنة السحابية)</label>
+      <label class="label">Google OAuth Access Token (مطلوب إذا لم يتوفر Webhook)</label>
       <input type="password" id="cfgAccessToken" class="input" placeholder="ya29.a0AfH6SM..." />
     </div>
     <div class="field">
@@ -788,23 +846,95 @@ function createKeyVaultModal() {
   // 7. popup.js
   const popupJs = `let selectedType = 'api_key';
 
-// Auto detect current tab domain
+// Auto detect and fetch full current URL and user email
 chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-  if (tabs && tabs[0] && tabs[0].url) {
+  if (tabs && tabs[0]) {
     try {
-      const url = new URL(tabs[0].url);
-      const domain = url.hostname.replace('www.', '');
-      const parts = domain.split('.');
-      if (parts.length > 0 && parts[0]) {
-        const name = parts[0].charAt(0).toUpperCase() + parts[0].slice(1);
-        document.getElementById('serviceName').value = name;
+      const fullUrl = tabs[0].url || tabs[0].pendingUrl || '';
+      if (fullUrl) {
+        const serviceInput = document.getElementById('serviceName');
+        if (serviceInput) {
+          serviceInput.value = fullUrl;
+        }
+        // Focus on secret value field directly since URL is already captured
+        const secretInput = document.getElementById('secretValue');
+        if (secretInput) {
+          secretInput.focus();
+        }
       }
-    } catch(e) {}
+    } catch(e) {
+      console.error('Error fetching tab URL:', e);
+    }
+
+    // Attempt to extract logged in user email from the active tab DOM
+    if (tabs[0].id && tabs[0].url && !tabs[0].url.startsWith('chrome://') && !tabs[0].url.startsWith('edge://') && !tabs[0].url.startsWith('about:')) {
+      chrome.scripting.executeScript({
+        target: { tabId: tabs[0].id },
+        func: () => {
+          try {
+            const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/gi;
+            const ignore = ['support@', 'info@', 'contact@', 'sales@', 'help@', 'privacy@', 'billing@', 'legal@', 'security@', 'admin@', 'noreply@', 'no-reply@', 'team@', 'marketing@'];
+            const isValid = (em) => {
+              if (!em) return false;
+              const c = em.trim().toLowerCase();
+              if (c.endsWith('.png') || c.endsWith('.jpg') || c.endsWith('.svg') || c.endsWith('.gif') || c.endsWith('.webp')) return false;
+              return !ignore.some(p => c.startsWith(p));
+            };
+
+            // 1. Check profile / account attributes
+            const attrs = document.querySelectorAll('[aria-label*="@"], [title*="@"], [data-email], [data-user-email], [data-login*="@"]');
+            for (const el of attrs) {
+              const raw = el.getAttribute('data-email') || el.getAttribute('data-user-email') || el.getAttribute('aria-label') || el.getAttribute('title') || '';
+              const m = raw.match(emailRegex);
+              if (m) {
+                for (const em of m) {
+                  if (isValid(em)) return em;
+                }
+              }
+            }
+
+            // 2. Profile / Account container text in header/nav
+            const containers = document.querySelectorAll('header, nav, [class*="profile" i], [class*="account" i], [class*="user" i], [id*="profile" i], [id*="account" i], [class*="avatar" i]');
+            for (const c of containers) {
+              const m = (c.innerText || '').match(emailRegex);
+              if (m) {
+                for (const em of m) {
+                  if (isValid(em)) return em;
+                }
+              }
+            }
+
+            // 3. Input email fields with value
+            const inputs = document.querySelectorAll('input[type="email"], input[name*="email" i], input[id*="email" i]');
+            for (const inp of inputs) {
+              const val = inp.value || '';
+              const m = val.match(emailRegex);
+              if (m) {
+                for (const em of m) {
+                  if (isValid(em)) return em;
+                }
+              }
+            }
+          } catch(e) {}
+          return '';
+        }
+      }).then((results) => {
+        if (results && results[0] && results[0].result) {
+          const emailInput = document.getElementById('userEmail');
+          if (emailInput && !emailInput.value) {
+            emailInput.value = results[0].result;
+          }
+        }
+      }).catch(() => {});
+    }
   }
 });
 
 // Load settings into inputs
-chrome.storage.local.get(['spreadsheetId', 'accessToken', 'appUrl'], (res) => {
+chrome.storage.local.get(['spreadsheetId', 'accessToken', 'webhookUrl', 'appUrl'], (res) => {
+  if (res.webhookUrl || KEYVAULT_DEFAULT_CONFIG.webhookUrl) {
+    document.getElementById('cfgWebhookUrl').value = res.webhookUrl || KEYVAULT_DEFAULT_CONFIG.webhookUrl;
+  }
   if (res.spreadsheetId || KEYVAULT_DEFAULT_CONFIG.spreadsheetId) {
     document.getElementById('cfgSpreadsheetId').value = res.spreadsheetId || KEYVAULT_DEFAULT_CONFIG.spreadsheetId;
   }
@@ -834,12 +964,13 @@ document.getElementById('tab-settings-btn').addEventListener('click', () => {
 
 // Save Settings Button
 document.getElementById('saveConfigBtn').addEventListener('click', () => {
+  const webhookUrl = document.getElementById('cfgWebhookUrl').value.trim();
   const spreadsheetId = document.getElementById('cfgSpreadsheetId').value.trim();
   const accessToken = document.getElementById('cfgAccessToken').value.trim();
   const appUrl = document.getElementById('cfgAppUrl').value.trim();
   const cfgStatus = document.getElementById('cfgStatus');
 
-  chrome.storage.local.set({ spreadsheetId, accessToken, appUrl }, () => {
+  chrome.storage.local.set({ webhookUrl, spreadsheetId, accessToken, appUrl }, () => {
     cfgStatus.className = 'status success';
     cfgStatus.innerText = '✅ تم حفظ الإعدادات بنجاح';
     setTimeout(() => { cfgStatus.style.display = 'none'; }, 2000);
@@ -996,6 +1127,53 @@ document.getElementById('saveBtn').addEventListener('click', async () => {
 6. اختر المجلد الذي قمت بفك الضغط إليه.
 
 🎉 **مبروك!** الآن يمكنك حفظ أي مفتاح أو كلمة مرور في أي وقت وأنت تتصفح أي موقع عبر الضغط على \`Ctrl + Shift + K\`!
+
+---
+
+## ⚡ الخيار الأفضل والموصى به للمزامنة مع Google Sheets (Webhook دائم بدون أي انتهاء صلاحية):
+لربط الإضافة والتطبيق مع جدول Google Sheets بدون الحاجة لإنشاء مشروع في Google Cloud وبدون انتهاء صلاحية:
+
+### كود Google Apps Script:
+\`\`\`javascript
+function doPost(e) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('Vault_Secrets') || ss.getActiveSheet();
+  var data = JSON.parse(e.postData.contents);
+
+  if (data.action === 'sync_all') {
+    sheet.clear();
+    if (data.headers) sheet.appendRow(data.headers);
+    if (data.secrets && data.secrets.length > 0) {
+      data.secrets.forEach(function(s) {
+        sheet.appendRow([
+          s.id, (s.type || '').toUpperCase(), s.serviceName,
+          s.usernameOrEmail || '', s.secretValue, s.environment || 'production',
+          s.project || 'General', (s.tags || []).join(', '), s.notes || '',
+          s.createdAt || new Date().toISOString(), s.updatedAt || new Date().toISOString()
+        ]);
+      });
+    }
+  } else {
+    var s = data.secret;
+    sheet.appendRow([
+      s.id, (s.type || '').toUpperCase(), s.serviceName,
+      s.usernameOrEmail || '', s.secretValue, s.environment || 'production',
+      s.project || 'General', (s.tags || []).join(', '), s.notes || '',
+      s.createdAt || new Date().toISOString(), s.updatedAt || new Date().toISOString()
+    ]);
+  }
+
+  return ContentService.createTextOutput(JSON.stringify({ result: 'success' }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+\`\`\`
+
+### خطوات التفعيل:
+1. في جدول Google Sheet، افتح **الإضافات (Extensions) > Apps Script**.
+2. الصق الكود أعلاه واضغط حفظ.
+3. اضغط **نشر (Deploy) > نشر جديد (New deployment)** واختر نوع: **تطبيق ويب (Web app)**.
+4. اضبط **من لديه حق الوصول (Who has access)** على: **أي شخص (Anyone)**، ثم اضغط Deploy.
+5. انسخ الرابط وضعه في إعدادات الإضافة أو التطبيق.
 `;
 
   zip.file("README.md", readmeMd);

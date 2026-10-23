@@ -28,6 +28,81 @@ export function extractSpreadsheetId(input: string): string {
 }
 
 /**
+ * Dynamically resolves the sheet tab name to use.
+ * 1. Checks if 'Vault_Secrets' exists.
+ * 2. If not, attempts to create it via batchUpdate addSheet.
+ * 3. If cannot create, returns the first sheet title (e.g. 'Sheet1' or 'ورقة1').
+ */
+export async function resolveSheetTabName(
+  accessToken: string,
+  spreadsheetId: string
+): Promise<string> {
+  const cleanId = extractSpreadsheetId(spreadsheetId);
+  if (!cleanId || !accessToken) return 'Vault_Secrets';
+
+  try {
+    const metaRes = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${cleanId}?fields=sheets.properties`,
+      {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      }
+    );
+
+    if (metaRes.ok) {
+      const data = await metaRes.json();
+      const sheets = data.sheets || [];
+      const hasVaultSheet = sheets.some((s: any) => s.properties?.title === 'Vault_Secrets');
+      if (hasVaultSheet) return 'Vault_Secrets';
+
+      // Try creating 'Vault_Secrets' sheet
+      try {
+        const addRes = await fetch(
+          `https://sheets.googleapis.com/v4/spreadsheets/${cleanId}:batchUpdate`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${accessToken}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              requests: [
+                {
+                  addSheet: {
+                    properties: {
+                      title: 'Vault_Secrets',
+                      gridProperties: { frozenRowCount: 1 }
+                    }
+                  }
+                }
+              ]
+            })
+          }
+        );
+        if (addRes.ok) {
+          // Write headers to the new sheet
+          await appendSheetValues(accessToken, cleanId, 'Vault_Secrets!A1:K1', [SHEET_HEADERS]);
+          return 'Vault_Secrets';
+        }
+      } catch (e) {
+        // Fallback to first existing sheet
+      }
+
+      // Return the first sheet's title
+      if (sheets[0]?.properties?.title) {
+        return sheets[0].properties.title;
+      }
+    } else if (metaRes.status === 401) {
+      throw new Error('AUTH_EXPIRED: انتهت صلاحية إذن Google (Access Token). يرجى إعادة تسجيل الدخول بحساب Google لتجديده.');
+    }
+  } catch (err: any) {
+    if (err?.message?.includes('AUTH_EXPIRED')) throw err;
+    console.warn('Could not inspect sheet tabs:', err);
+  }
+
+  return 'Vault_Secrets';
+}
+
+/**
  * Creates a brand new Google Spreadsheet with headers
  */
 export async function createGoogleSpreadsheet(
@@ -59,6 +134,9 @@ export async function createGoogleSpreadsheet(
 
   if (!createRes.ok) {
     const errData = await createRes.json().catch(() => ({}));
+    if (createRes.status === 401) {
+      throw new Error('AUTH_EXPIRED: انتهت صلاحية إذن Google (Access Token). يرجى إعادة تسجيل الدخول بحساب Google.');
+    }
     throw new Error(errData.error?.message || `Failed to create spreadsheet: ${createRes.statusText}`);
   }
 
@@ -136,7 +214,7 @@ export async function formatHeaderRow(accessToken: string, spreadsheetId: string
 }
 
 /**
- * Appends rows to a spreadsheet
+ * Appends rows to a spreadsheet with fallback if tab name fails
  */
 export async function appendSheetValues(
   accessToken: string,
@@ -145,7 +223,8 @@ export async function appendSheetValues(
   values: any[][]
 ): Promise<any> {
   const cleanId = extractSpreadsheetId(spreadsheetId);
-  const res = await fetch(
+  
+  let res = await fetch(
     `https://sheets.googleapis.com/v4/spreadsheets/${cleanId}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED`,
     {
       method: 'POST',
@@ -153,15 +232,31 @@ export async function appendSheetValues(
         'Authorization': `Bearer ${accessToken}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({
-        values
-      })
+      body: JSON.stringify({ values })
     }
   );
 
+  // If 400 (range parsing error e.g. tab name not found), fallback to generic A:K
+  if (!res.ok && res.status === 400 && range.includes('!')) {
+    res = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${cleanId}/values/A:K:append?valueInputOption=USER_ENTERED`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ values })
+      }
+    );
+  }
+
   if (!res.ok) {
     const errData = await res.json().catch(() => ({}));
-    throw new Error(errData.error?.message || `Failed to append values: ${res.statusText}`);
+    if (res.status === 401) {
+      throw new Error('AUTH_EXPIRED: انتهت صلاحية إذن Google (Access Token). يرجى إعادة تسجيل الدخول بحساب Google.');
+    }
+    throw new Error(errData.error?.message || `Failed to append values: HTTP ${res.status}`);
   }
 
   return await res.json();
@@ -171,10 +266,32 @@ export async function appendSheetValues(
  * Syncs single secret item to Google Sheet
  */
 export async function syncSecretToGoogleSheet(
-  accessToken: string,
+  accessToken: string | null | undefined,
   config: GoogleSheetConfig,
   secret: SecretItem
 ): Promise<{ success: boolean; spreadsheetUrl?: string }> {
+  // If webhookUrl is configured, sync via Apps Script Webhook
+  if (config.webhookUrl) {
+    try {
+      await fetch(config.webhookUrl, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'append', secret })
+      });
+      return {
+        success: true,
+        spreadsheetUrl: config.spreadsheetUrl || undefined
+      };
+    } catch (e) {
+      console.warn('Webhook sync error:', e);
+    }
+  }
+
+  if (!accessToken) {
+    throw new Error('NO_TOKEN: يتطلب الحفظ في Google Sheets وجود Access Token أو Webhook.');
+  }
+
   let currentSheetId = extractSpreadsheetId(config.spreadsheetId || '');
 
   // If no spreadsheet ID exists yet, create one
@@ -184,6 +301,8 @@ export async function syncSecretToGoogleSheet(
     config.spreadsheetId = created.id;
     config.spreadsheetUrl = created.url;
   }
+
+  const sheetTitle = await resolveSheetTabName(accessToken, currentSheetId);
 
   const rowData = [
     secret.id,
@@ -199,7 +318,7 @@ export async function syncSecretToGoogleSheet(
     secret.updatedAt
   ];
 
-  await appendSheetValues(accessToken, currentSheetId, 'Vault_Secrets!A:K', [rowData]);
+  await appendSheetValues(accessToken, currentSheetId, `'${sheetTitle}'!A:K`, [rowData]);
 
   return {
     success: true,
@@ -213,10 +332,29 @@ export async function syncSecretToGoogleSheet(
 export async function pushAllSecretsToSheet(
   accessToken: string,
   spreadsheetId: string,
-  secrets: SecretItem[]
-): Promise<boolean> {
+  secrets: SecretItem[],
+  webhookUrl?: string | null
+): Promise<{ success: boolean; rowCount: number }> {
+  // 1. If webhookUrl is configured, sync via Apps Script Webhook
+  if (webhookUrl) {
+    try {
+      await fetch(webhookUrl, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'sync_all', secrets, headers: SHEET_HEADERS })
+      });
+      return { success: true, rowCount: secrets.length };
+    } catch (err: any) {
+      console.warn('Webhook sync notice:', err);
+    }
+  }
+
   const cleanId = extractSpreadsheetId(spreadsheetId);
-  if (!cleanId || !accessToken) return false;
+  if (!cleanId) throw new Error('Spreadsheet ID is missing');
+  if (!accessToken) throw new Error('NO_TOKEN: لم يتم توفير Access Token للكتابة في Google Sheets.');
+
+  const sheetTitle = await resolveSheetTabName(accessToken, cleanId);
 
   const rows = [
     SHEET_HEADERS,
@@ -235,21 +373,44 @@ export async function pushAllSecretsToSheet(
     ])
   ];
 
-  const res = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${cleanId}/values/Vault_Secrets!A1:K${rows.length}?valueInputOption=USER_ENTERED`,
+  let range = `'${sheetTitle}'!A1:K${rows.length}`;
+  let res = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${cleanId}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`,
     {
       method: 'PUT',
       headers: {
         'Authorization': `Bearer ${accessToken}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({
-        values: rows
-      })
+      body: JSON.stringify({ values: rows })
     }
   );
 
-  return res.ok;
+  // If 400 (range error), fallback to A1:K
+  if (!res.ok && res.status === 400) {
+    range = `A1:K${rows.length}`;
+    res = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${cleanId}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`,
+      {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ values: rows })
+      }
+    );
+  }
+
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    if (res.status === 401) {
+      throw new Error('AUTH_EXPIRED: انتهت صلاحية إذن Google (Access Token). يرجى إعادة تسجيل الدخول بحساب Google.');
+    }
+    throw new Error(errData.error?.message || `Failed to push secrets: HTTP ${res.status}`);
+  }
+
+  return { success: true, rowCount: secrets.length };
 }
 
 /**
@@ -269,7 +430,6 @@ export async function fetchSecretsFromSheet(
     throw new Error('Google OAuth Access Token or API Key is required');
   }
 
-  // Try sheet names: 'Vault_Secrets', 'Sheet1', or generic range 'A2:K1000'
   const sheetNamesToTry = ['Vault_Secrets!A2:K1000', 'Sheet1!A2:K1000', 'A2:K1000'];
 
   let rows: string[][] = [];
@@ -309,7 +469,7 @@ export async function fetchSecretsFromSheet(
 
   // Convert rows into valid SecretItem objects
   const parsedItems: SecretItem[] = rows
-    .filter(row => row && row.length >= 2 && (row[2] || row[4])) // Ensure at least serviceName or secret exists
+    .filter(row => row && row.length >= 2 && (row[2] || row[4]))
     .map((row: string[], index: number): SecretItem => {
       const rawType = (row[1] || 'api_key').toLowerCase().replace(/\s+/g, '_');
       const validTypes = ['api_key', 'password', 'env_var', 'token', 'database_url', 'note'];

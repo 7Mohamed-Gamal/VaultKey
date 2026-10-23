@@ -249,16 +249,17 @@ export default function App() {
     }
   };
 
-  // Handle Manual Sheet ID Link
-  const handleManualConnect = async (spreadsheetId: string, accessToken?: string, apiKey?: string) => {
-    const cleanId = extractSpreadsheetId(spreadsheetId) || 'keyvault_live_database_sheet';
+  // Handle Manual Sheet ID or Webhook Link
+  const handleManualConnect = async (spreadsheetId: string, accessToken?: string, apiKey?: string, webhookUrl?: string) => {
+    const cleanId = extractSpreadsheetId(spreadsheetId);
     const newConfig: GoogleSheetConfig = {
       isConnected: true,
-      spreadsheetId: cleanId,
+      spreadsheetId: cleanId || null,
       spreadsheetName: 'KeyVault_API_Secrets_DB',
       spreadsheetUrl: cleanId 
         ? `https://docs.google.com/spreadsheets/d/${cleanId}/edit` 
-        : 'https://docs.google.com/spreadsheets',
+        : (webhookUrl ? 'https://docs.google.com/spreadsheets' : null),
+      webhookUrl: webhookUrl || null,
       lastSyncedAt: new Date().toISOString(),
       accountEmail: '7orient.dev7@gmail.com',
       accessToken: accessToken || null,
@@ -267,34 +268,35 @@ export default function App() {
     };
     setGoogleConfig(newConfig);
 
-    // If an Access Token or API Key was provided, immediately try to fetch data from the sheet
-    if (cleanId && (accessToken || apiKey)) {
+    // If write access exists (webhook or accessToken), immediately push current secrets to sheet
+    if (webhookUrl || (cleanId && accessToken)) {
       setIsSyncing(true);
       try {
-        const fetched = await fetchSecretsFromSheet({ accessToken, apiKey }, cleanId);
-        if (fetched && fetched.length > 0) {
-          setSecrets(prev => {
-            // Merge existing local and sheet secrets by ID or ServiceName
-            const existingMap = new Map(prev.map(item => [item.id, item]));
-            fetched.forEach(item => existingMap.set(item.id, item));
-            return Array.from(existingMap.values());
-          });
-          showToast(
-            isAr 
-              ? `✅ تم الاتصال وجلب ${fetched.length} سجل من Google Sheet بنجاح!` 
-              : `Connected and pulled ${fetched.length} secrets from Google Sheet!`
-          );
-        } else {
-          showToast(isAr ? 'تم ربط جدول البيانات بنجاح!' : 'Google Spreadsheet linked successfully!');
-        }
+        await pushAllSecretsToSheet(accessToken || '', cleanId || '', secrets, webhookUrl);
+        showToast(
+          isAr 
+            ? `✅ تم ربط جدول Google Sheets وحفظ ${secrets.length} سجل فورياً بنجاح!` 
+            : `Linked to Google Sheets and pushed ${secrets.length} secrets successfully!`,
+          'success'
+        );
       } catch (err: any) {
-        console.warn('Initial sheet fetch notice:', err);
-        showToast(isAr ? 'تم ربط معرف الجدول بنجاح' : 'Spreadsheet ID saved successfully');
+        console.warn('Initial sheet sync error:', err);
+        showToast(
+          isAr 
+            ? `تم حفظ الإعدادات، يرجى التأكد من صلاحية الرابط أو التوكن: ${err?.message || ''}` 
+            : 'Settings saved, verify token or URL',
+          'info'
+        );
       } finally {
         setIsSyncing(false);
       }
     } else {
-      showToast(isAr ? 'تم ربط جدول البيانات بنجاح!' : 'Google Spreadsheet linked successfully!');
+      showToast(
+        isAr 
+          ? 'تم حفظ معرف الجدول. للمزامنة والحفظ في الجدول، تأكد من إدخال Access Token أو Webhook' 
+          : 'Spreadsheet ID saved. To enable writing, provide Access Token or Webhook.',
+        'info'
+      );
     }
   };
 
@@ -403,7 +405,7 @@ export default function App() {
     try {
       const cleanSheetId = extractSpreadsheetId(googleConfig.spreadsheetId || '');
 
-      if (!cleanSheetId) {
+      if (!cleanSheetId && !googleConfig.webhookUrl) {
         setIsSyncing(false);
         setIsOAuthModalOpen(true);
         showToast(
@@ -413,76 +415,96 @@ export default function App() {
         return;
       }
 
-      // Step 1: If Access Token exists, push any local secrets not yet in sheet
-      if (googleConfig.accessToken && secrets.length > 0) {
-        try {
-          await pushAllSecretsToSheet(googleConfig.accessToken, cleanSheetId, secrets);
-        } catch (pushErr) {
-          console.warn('Batch push to sheet notice:', pushErr);
-        }
+      // Check if we have write permission (either accessToken or webhookUrl)
+      const hasWriteAccess = Boolean(googleConfig.accessToken || googleConfig.webhookUrl);
+
+      if (!hasWriteAccess) {
+        setIsSyncing(false);
+        setIsOAuthModalOpen(true);
+        showToast(
+          isAr 
+            ? '⚠️ يتطلب حفظ البيانات في Google Sheets توفير إذن الكتابة (Access Token) أو ربط Webhook.' 
+            : 'Writing to Google Sheets requires an Access Token or Webhook URL.',
+          'error'
+        );
+        return;
       }
 
-      // Step 2: Fetch and pull latest records from Google Sheet
+      // Step 1: Push all local secrets to Google Sheet
+      try {
+        await pushAllSecretsToSheet(
+          googleConfig.accessToken || '',
+          cleanSheetId,
+          secrets,
+          googleConfig.webhookUrl
+        );
+      } catch (pushErr: any) {
+        const msg = pushErr?.message || '';
+        if (msg.includes('AUTH_EXPIRED') || msg.includes('401')) {
+          setIsSyncing(false);
+          setIsOAuthModalOpen(true);
+          showToast(
+            isAr 
+              ? '⚠️ انتهت صلاحية إذن Google (Access Token). يرجى إعادة تسجيل الدخول بحساب Google لتجديده.' 
+              : 'Google session expired. Please re-authenticate.',
+            'error'
+          );
+          return;
+        }
+        throw pushErr;
+      }
+
+      // Step 2: Fetch and pull latest records from Google Sheet if possible
+      let pulledCount = 0;
       const auth = {
         accessToken: googleConfig.accessToken,
         apiKey: googleConfig.apiKey
       };
 
-      if (auth.accessToken || auth.apiKey) {
-        const fetched = await fetchSecretsFromSheet(auth, cleanSheetId);
-        if (fetched && fetched.length > 0) {
-          setSecrets(prev => {
-            const map = new Map<string, SecretItem>();
-            // Keep local items first
-            prev.forEach(item => map.set(item.id, item));
-            // Merge or add sheet items
-            fetched.forEach(item => {
-              const existing = map.get(item.id);
-              if (!existing) {
-                map.set(item.id, item);
-              } else {
-                // If sheet has newer update, take sheet
-                map.set(item.id, { ...existing, ...item });
-              }
+      if (cleanSheetId && (auth.accessToken || auth.apiKey)) {
+        try {
+          const fetched = await fetchSecretsFromSheet(auth, cleanSheetId);
+          if (fetched && fetched.length > 0) {
+            pulledCount = fetched.length;
+            setSecrets(prev => {
+              const map = new Map<string, SecretItem>();
+              prev.forEach(item => map.set(item.id, item));
+              fetched.forEach(item => {
+                const existing = map.get(item.id);
+                if (!existing) {
+                  map.set(item.id, item);
+                } else {
+                  map.set(item.id, { ...existing, ...item });
+                }
+              });
+              return Array.from(map.values());
             });
-            return Array.from(map.values());
-          });
-
-          showToast(
-            isAr 
-              ? `✅ تمت المزامنة الثنائية بنجاح! تم تحديث وتأكيد ${fetched.length} سجل من Google Sheets.` 
-              : `✅ Two-way sync completed! Synced ${fetched.length} secrets with Google Sheets.`
-          );
-        } else {
-          showToast(
-            isAr 
-              ? '✅ تم إرسال السجلات ومزامنة الحالة مع Google Sheets بنجاح!' 
-              : '✅ Synced and uploaded records to Google Sheets!'
-          );
+          }
+        } catch (fetchErr) {
+          console.warn('Pull from sheet notice:', fetchErr);
         }
-      } else {
-        // If neither token nor API key, open modal
-        setIsOAuthModalOpen(true);
-        showToast(
-          isAr ? 'يرجى إدخال Access Token أو API Key للمزامنة' : 'Please provide Access Token or API Key to sync',
-          'info'
-        );
       }
 
       setGoogleConfig(prev => ({ 
         ...prev, 
-        spreadsheetId: cleanSheetId,
-        spreadsheetUrl: `https://docs.google.com/spreadsheets/d/${cleanSheetId}/edit`,
+        spreadsheetId: cleanSheetId || prev.spreadsheetId,
+        spreadsheetUrl: cleanSheetId ? `https://docs.google.com/spreadsheets/d/${cleanSheetId}/edit` : prev.spreadsheetUrl,
         lastSyncedAt: new Date().toISOString() 
       }));
-    } catch (err: any) {
-      console.warn('Sync error or offline fallback:', err);
-      setGoogleConfig(prev => ({ ...prev, lastSyncedAt: new Date().toISOString() }));
+
       showToast(
         isAr 
-          ? 'تنبيه: تم حفظ البيانات محلياً وتحديث وقت المزامنة.' 
-          : 'Notice: Data saved locally and sync timestamp updated.',
-        'info'
+          ? `✅ تمت المزامنة بنجاح! تم حفظ وتأكيد ${secrets.length} سجل في Google Sheets.` 
+          : `✅ Sync successful! Saved ${secrets.length} records in Google Sheets.`,
+        'success'
+      );
+    } catch (err: any) {
+      console.error('Sync error:', err);
+      showToast(
+        isAr 
+          ? `❌ خطأ في المزامنة: ${err?.message || 'تعذر الوصول إلى جدول Google Sheets'}` 
+          : `❌ Sync error: ${err?.message || 'Failed to reach Google Sheet'}`,
+        'error'
       );
     } finally {
       setIsSyncing(false);

@@ -24,6 +24,7 @@ export interface GoogleSheetConfig {
   spreadsheetId: string | null;
   spreadsheetName: string;
   spreadsheetUrl: string | null;
+  webhookUrl?: string | null;
   lastSyncedAt: string | null;
   accountEmail: string | null;
   accountName?: string;
